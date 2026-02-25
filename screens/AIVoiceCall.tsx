@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { XMarkIcon, MicrophoneIcon, SpeakerWaveIcon, SparklesIcon } from '../components/icons';
 import { api } from '../services/api';
 
@@ -93,7 +93,7 @@ const AIVoiceCall: React.FC<AIVoiceCallProps> = ({ onHangup }) => {
             });
             
             // 2. Initialize Gemini Client
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
             
             const config = {
                 model: 'gemini-2.5-flash-native-audio-preview-12-2025',

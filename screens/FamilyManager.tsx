@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api, formatError } from '../services/api';
 import { FamilyMember } from '../types';
 import { UsersIcon, PlusIcon, XMarkIcon, EnvelopeIcon, ArrowPathIcon, ShieldCheckIcon, ClockIcon, ShareIcon, QrCodeIcon, CameraIcon, CheckCircleIcon } from '../components/icons';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface FamilyManagerProps {
     onBack: () => void;
@@ -89,8 +89,8 @@ const FamilyManager: React.FC<FamilyManagerProps> = ({ onBack, onSelectMember })
             reader.onloadend = async () => {
                 try {
                     const base64Data = (reader.result as string).split(',')[1];
-                    // Fix: Initializing GoogleGenAI right before the API call as per guidelines
-                    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+                    // Fix: Initializing GoogleGenerativeAI right before the API call as per guidelines
+                    const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
                     const response = await ai.models.generateContent({
                         // Fix: Updated model to gemini-3-flash-preview for latest image understanding capabilities
                         model: 'gemini-3-flash-preview',

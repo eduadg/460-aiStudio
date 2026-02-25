@@ -8,7 +8,7 @@ import {
     ShieldCheckIcon, CameraIcon, PhoneIcon, ChatBubbleOvalLeftEllipsisIcon,
     CalendarDaysIcon, VideoCameraIcon, BoltIcon, ChevronRightIcon
 } from '../components/icons';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface DoctorPresentationProps {
     doctorId: string;
@@ -67,7 +67,7 @@ const DoctorPresentation: React.FC<DoctorPresentationProps> = ({
 
     const generateRelationshipInsight = async (doc: User, timeline: TimelineEvent[]) => {
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
             const lastEvents = timeline.slice(0, 3).map(e => `${e.title} em ${new Date(e.timestamp).toLocaleDateString()}`).join(', ');
             
             const prompt = `Gere uma frase curta (máximo 120 caracteres) e acolhedora em português sobre a relação entre o paciente e seu médico Dr. ${doc.name}. 

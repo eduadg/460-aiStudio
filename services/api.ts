@@ -1,7 +1,7 @@
 
 import { supabase } from './supabaseClient';
 import { Measure, DoctorMetric, UrgentCase, User, ChatMessage, PatientSummary, FamilyMember, Meal, SleepSession, SleepStage, NutritionReport, MedicalActionPlan, Prescription, CallLog, DoctorReview, PatientFullProfile, TimelineEvent, Appointment, Reminder, VideoEntry, SuggestedReminder, NutritionInsight, DoctorAvailabilityBlock, DaySlotStatus, ClinicalCondition, LabExam, LabMarker } from '../types';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { offlineService, STORES_CONST } from './offline';
 
 // Helper para formatar erros de forma segura
@@ -358,7 +358,7 @@ export const api = {
     },
     generateActionPlan: async (patientId: string): Promise<MedicalActionPlan> => {
         const healthContext = await api.getHealthContext(patientId);
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+        const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
         const response = await ai.models.generateContent({
             model: 'gemini-3-pro-preview',
             contents: `Com base no contexto de saúde abaixo, gere um plano de ação médica curto em JSON.
@@ -389,7 +389,7 @@ export const api = {
     },
 
     analyzeMedicalExam: async (imageFile: File): Promise<any> => {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+        const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
         
         // Convert File to Base64
         const base64 = await new Promise<string>((resolve) => {

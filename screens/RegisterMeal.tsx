@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { CameraIcon, CheckCircleIcon, ArrowPathIcon, XMarkIcon, CakeIcon } from '../components/icons';
 import { api } from '../services/api';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import NutritionReportView from './NutritionReportView';
 
 interface RegisterMealProps {
@@ -49,8 +49,8 @@ const RegisterMeal: React.FC<RegisterMealProps> = ({ onBack, onSaveSuccess }) =>
         
         try {
             const base64Data = base64Image.split(',')[1];
-            // Fix: Initializing GoogleGenAI right before the API call as per guidelines
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            // Fix: Initializing GoogleGenerativeAI right before the API call as per guidelines
+            const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
             const prompt = `Analise esta imagem de comida. Identifique os alimentos, estime calorias totais, proteínas (g), carboidratos (g), gorduras (g) e tamanho da porção.
             Retorne APENAS um JSON válido: { "foods": ["Item 1"], "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "portion": "descrição" }`;
 

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PaperAirplaneIcon, ArrowPathIcon, UserCircleIcon, MicrophoneIcon, StopIcon, ClipboardDocumentCheckIcon, ShareIcon, SpeakerWaveIcon, PrinterIcon, PaperClipIcon, XMarkIcon, BellIcon, CheckCircleIcon, CloudIcon } from '../components/icons';
 import { api } from '../services/api';
 import { elevenLabsService } from '../services/elevenLabs';
@@ -380,7 +380,7 @@ const Chat: React.FC<ChatProps> = ({ initialMessage, onClearInitialMessage }) =>
                     parts.push({ text: text });
                 }
 
-                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+                const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
                 const response = await ai.models.generateContent({
                     model: 'gemini-3-flash-preview',
                     contents: { parts },

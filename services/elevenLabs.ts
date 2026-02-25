@@ -1,7 +1,7 @@
 
 // ATENÇÃO: Substitua pela sua API Key real da ElevenLabs.
-// Em produção, use process.env.REACT_APP_ELEVENLABS_API_KEY
-const ELEVENLABS_API_KEY = process.env.REACT_APP_ELEVENLABS_API_KEY || 'sk_c2e283294c79402e3aa02c2e0e014798d423984534839843'; 
+// Em produção, use import.meta.env.VITE_ELEVENLABS_API_KEY
+const ELEVENLABS_API_KEY = import.meta.env.VITE_ELEVENLABS_API_KEY || 'sk_c2e283294c79402e3aa02c2e0e014798d423984534839843'; 
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
 
 export const elevenLabsService = {

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import html2canvas from 'html2canvas';
 import { ShareIcon, ArrowPathIcon, MapPinIcon, CameraIcon, SparklesIcon } from './icons';
 import { useTranslation } from '../services/i18n';
@@ -176,7 +176,7 @@ const WeatherHero: React.FC = () => {
 
     const generateAiContent = async (w: WeatherData, location: string) => {
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
             const condition = getWeatherType(w.weathercode);
             
             const prompt = `
