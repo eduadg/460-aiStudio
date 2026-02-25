@@ -1,0 +1,9 @@
+{
+  "name": "Copy of Copy of Copy of Copy of Dr. X",
+  "description": "Um painel de saúde centrado no paciente que fornece uma visão abrangente das rotinas diárias, consultas, resultados de exames e insights de saúde orientados por IA. Gerencie sua jornada de saúde com o Dr. X.",
+  "requestFramePermissions": [
+    "bluetooth",
+    "camera",
+    "microphone"
+  ]
+}
