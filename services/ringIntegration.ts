@@ -1,5 +1,5 @@
 
-import { RingScanConfig, RingConnectConfig, RingDeviceInfo, RingRealtimeData } from '../types';
+import { RingScanConfig, RingConnectConfig, RingDeviceInfo, RingRealtimeData, MeasureBatch } from '../types';
 import { api } from './api'; // Import API for background saving
 
 // --- DEFINIÇÕES DE TIPOS WEB BLUETOOTH ---
@@ -73,19 +73,19 @@ const SERVICES_TO_LOOK_FOR = [
 // UUIDs Específicos para detecção
 const NUS_RX_UUID_PREFIX = '6e400002'; // Write
 const NUS_TX_UUID_PREFIX = '6e400003'; // Notify
-const FEE7_WRITE_PREFIX  = '0000fea1'; // Variação comum
+const FEE7_WRITE_PREFIX = '0000fea1'; // Variação comum
 const FEE7_NOTIFY_PREFIX = '0000fea2'; // Variação comum
 
 // Comandos Hexadecimais para Ativação de Sensores
 const COMMANDS = {
     HANDSHAKE_TIME: "01190c0b052917", // Sincroniza hora (fake timestamp)
     HANDSHAKE_USER: "0221af4b01",     // Envia perfil usuário (fake)
-    START_HEART:    "09",             // Inicia HR Contínuo (JYOU)
-    START_BP:       "25",             // Inicia Pressão/SpO2 (JYOU)
-    GET_ACTIVITY:   "03",             // Pede passos/calorias
-    START_HRV:      "22",             // ALTERADO: 22 é Fadiga/Estresse em chips NYJ (era 0302)
-    KEEP_ALIVE:     "24",             // Heartbeat do protocolo
-    STOP_ALL:       "00"              // Para medições
+    START_HEART: "09",             // Inicia HR Contínuo (JYOU)
+    START_BP: "25",             // Inicia Pressão/SpO2 (JYOU)
+    GET_ACTIVITY: "03",             // Pede passos/calorias
+    START_HRV: "22",             // ALTERADO: 22 é Fadiga/Estresse em chips NYJ (era 0302)
+    KEEP_ALIVE: "24",             // Heartbeat do protocolo
+    STOP_ALL: "00"              // Para medições
 };
 
 const STORAGE_KEY_LAST_DEVICE = 'drx_last_device_id';
@@ -93,16 +93,22 @@ const STORAGE_KEY_LAST_DEVICE = 'drx_last_device_id';
 class RingController {
     private device: BluetoothDevice | null = null;
     private server: BluetoothRemoteGATTServer | null = null;
-    
+
     private writeChar: BluetoothRemoteGATTCharacteristic | null = null;
     private batteryChar: BluetoothRemoteGATTCharacteristic | null = null;
-    
+
     // Controle de fluxo
     private commandQueue: Array<() => Promise<void>> = [];
     private isQueueProcessing = false;
     private keepAliveInterval: any = null;
     private backgroundSyncInterval: any = null;
     private currentUserId: string | null = null;
+
+    //Buffer
+    private measureBuffer: MeasureBatch[] = [];
+    private bufferInterval: any = null;
+    private readonly BUFFER_MAX_SIZE = 5;
+    private readonly BUFFER_FLUSH_INTERVAL_MS = 10000;
 
     private dataCallback: ((data: RingRealtimeData) => void) | null = null;
 
@@ -125,19 +131,19 @@ class RingController {
     // ----------------------------------------------------------------
     // 1. CONEXÃO & DESCOBERTA
     // ----------------------------------------------------------------
-    
+
     async scanDevices(config?: RingScanConfig): Promise<RingDeviceInfo> {
         const nav = navigator as any;
         if (!nav.bluetooth) throw new Error("Bluetooth não disponível neste navegador.");
 
         console.log("[Ring] Iniciando Scan...");
-        
+
         try {
             // Tenta filtros amplos para pegar a maioria dos anéis genéricos
             this.device = await nav.bluetooth.requestDevice({
                 filters: [
-                    { namePrefix: "NYJ" }, 
-                    { namePrefix: "Smart" }, 
+                    { namePrefix: "NYJ" },
+                    { namePrefix: "Smart" },
                     { namePrefix: "Ring" },
                     { namePrefix: "J" },
                     { namePrefix: "Q" }
@@ -168,7 +174,7 @@ class RingController {
                 this.device.addEventListener('gattserverdisconnected', this.onDisconnect.bind(this));
                 this.server = await this.device.gatt!.connect();
             }
-            
+
             console.log("[Ring] GATT Conectado. Descobrindo serviços...");
             await this.discoverServicesAndSubscribe();
 
@@ -177,7 +183,8 @@ class RingController {
 
             // Iniciar sequência de inicialização
             this.startKeepAlive();
-            
+            this.startBufferFlush();
+
             // Handshake inicial para "acordar" o anel
             await this.queueCommand(() => this.sendRaw(COMMANDS.HANDSHAKE_TIME));
             await this.delay(300);
@@ -211,14 +218,14 @@ class RingController {
                 console.log("[Ring] Dispositivo conhecido encontrado. Reconectando silenciosamente...");
                 this.device = device;
                 this.device!.addEventListener('gattserverdisconnected', this.onDisconnect.bind(this));
-                
+
                 // Tenta conectar sem user gesture (permitido em 'getDevices' se já pareado)
                 this.server = await this.device!.gatt!.connect();
-                
+
                 await this.discoverServicesAndSubscribe();
                 this.startKeepAlive();
                 this.startBackgroundSync(userId); // Inicia sync silencioso
-                
+
                 console.log("[Ring] Auto-reconexão bem sucedida!");
                 // Notifica UI que conectou
                 window.dispatchEvent(new CustomEvent("ring-connection-status", { detail: { connected: true } }));
@@ -233,12 +240,12 @@ class RingController {
     private async discoverServicesAndSubscribe() {
         if (!this.server) return;
         const services = await this.server.getPrimaryServices();
-        
+
         let foundWrite = false;
 
         for (const service of services) {
             const serviceUuid = service.uuid.toLowerCase();
-            
+
             const chars = await service.getCharacteristics();
 
             for (const char of chars) {
@@ -247,10 +254,10 @@ class RingController {
 
                 // 1. Identificar Canal de Escrita (RX)
                 if ((props.write || props.writeWithoutResponse) && !foundWrite) {
-                    if (uuid.includes(NUS_RX_UUID_PREFIX) || 
-                        uuid.includes(FEE7_WRITE_PREFIX) || 
+                    if (uuid.includes(NUS_RX_UUID_PREFIX) ||
+                        uuid.includes(FEE7_WRITE_PREFIX) ||
                         (serviceUuid.includes('fee7') && props.writeWithoutResponse)) {
-                        
+
                         this.writeChar = char;
                         foundWrite = true;
                         console.log(`[Ring] Canal de Escrita Definido: ${uuid}`);
@@ -304,7 +311,7 @@ class RingController {
         if (this.batteryChar) {
             this.batteryChar.readValue().then(val => {
                 this.updateMetrics({ batteryLevel: val.getUint8(0) });
-            }).catch(() => {});
+            }).catch(() => { });
         }
 
         // Sequência "Burst" para forçar leitura de todos os sensores
@@ -336,7 +343,7 @@ class RingController {
         if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
         this.keepAliveInterval = setInterval(() => {
             if (this.server?.connected && this.writeChar) {
-                this.queueCommand(() => this.sendRaw(COMMANDS.KEEP_ALIVE)).catch(() => {});
+                this.queueCommand(() => this.sendRaw(COMMANDS.KEEP_ALIVE)).catch(() => { });
             }
         }, 3000);
     }
@@ -345,9 +352,9 @@ class RingController {
     startBackgroundSync(userId: string) {
         this.currentUserId = userId;
         if (this.backgroundSyncInterval) clearInterval(this.backgroundSyncInterval);
-        
+
         console.log("[Ring] Iniciando sincronização em segundo plano...");
-        
+
         // Executa imediatamente uma vez
         this.performBackgroundSync();
 
@@ -370,7 +377,7 @@ class RingController {
                 const val = await this.batteryChar.readValue();
                 const level = val.getUint8(0);
                 this.updateMetrics({ batteryLevel: level });
-                
+
                 // Atualiza status no servidor
                 api.updateDeviceStatus(true, level);
                 console.log(`[Ring-BG] Bateria Sync: ${level}%`);
@@ -379,7 +386,7 @@ class RingController {
             // 2. Pedir Passos (Activity)
             // Envia comando e espera que o handleIncomingData processe a resposta
             await this.queueCommand(() => this.sendRaw(COMMANDS.GET_ACTIVITY));
-            
+
         } catch (e) {
             console.warn("[Ring-BG] Erro no sync:", e);
         }
@@ -391,14 +398,14 @@ class RingController {
 
     private handleIncomingData(dataView: DataView, uuid: string) {
         const buffer = new Uint8Array(dataView.buffer);
-        
+
         const textDecoder = new TextDecoder('utf-8');
         let text = "";
         let isAscii = true;
 
-        for(let i=0; i<buffer.length; i++) {
+        for (let i = 0; i < buffer.length; i++) {
             if (buffer[i] < 0x20 || buffer[i] > 0x7E) {
-                if(buffer[i] !== 0x0D && buffer[i] !== 0x0A && buffer[i] !== 0x00) isAscii = false;
+                if (buffer[i] !== 0x0D && buffer[i] !== 0x0A && buffer[i] !== 0x00) isAscii = false;
             }
         }
 
@@ -414,7 +421,7 @@ class RingController {
         // Hex Debug
         // const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
         // window.dispatchEvent(new CustomEvent("ring-debug", { detail: { text: "", hex, isAscii: false, uuid } }));
-        
+
         this.parseBinaryProtocol(dataView, uuid);
     }
 
@@ -428,7 +435,7 @@ class RingController {
                 updated = true;
             }
         }
-        
+
         if (text.includes("MEAS_EVT_SPO2=")) {
             const val = parseInt(text.split('=')[1]);
             if (!isNaN(val) && val > 0) {
@@ -455,32 +462,26 @@ class RingController {
                 const steps = parseInt(parts[1]);
                 if (!isNaN(steps)) {
                     this.updateMetrics({ steps, source: 'proprietary' });
-                    
+
                     // PERSISTÊNCIA EM BACKGROUND PARA PASSOS
                     // Se recebemos passos e não estamos em modo "realtime stream" explícito (ou seja, foi o background sync que pediu)
                     // podemos salvar. Para simplificar, sempre salvamos passos se forem válidos, pois mudam lentamente.
-                    if (steps > 0 && this.currentUserId) {
-                        console.log(`[Ring-BG] Passos Sync: ${steps}`);
-                        // Opcional: Só salvar se mudou significativamente ou usar debounce, 
-                        // mas aqui vamos confiar que o intervalo de 60s limita as chamadas de API.
-                        api.saveSingleMeasure('steps', steps.toString());
-                    }
+                    updated = true;
+
+                }
+            }
+
+            // Tenta capturar HRV/Fadiga se o anel mandar resposta texto
+            if (text.includes("MEAS_HRV=") || text.includes("MEAS_FATIGUE=")) {
+                const val = parseInt(text.split('=')[1]);
+                if (!isNaN(val) && val > 0) {
+                    this.updateMetrics({ hrv: val, source: 'proprietary' });
                     updated = true;
                 }
             }
-        }
 
-        // Tenta capturar HRV/Fadiga se o anel mandar resposta texto
-        if (text.includes("MEAS_HRV=") || text.includes("MEAS_FATIGUE=")) {
-            const val = parseInt(text.split('=')[1]);
-            if (!isNaN(val) && val > 0) {
-                this.updateMetrics({ hrv: val, source: 'proprietary' });
-                updated = true;
-            }
+            if (updated) console.log(`[Ring] Dados Texto Atualizados: ${text}`);
         }
-
-        if (updated) console.log(`[Ring] Dados Texto Atualizados: ${text}`);
-    }
 
     private parseBinaryProtocol(data: DataView, uuid: string) {
         const buffer = new Uint8Array(data.buffer);
@@ -510,20 +511,20 @@ class RingController {
         // Pacotes Proprietários Hex (JYOU)
         // 0x32 costuma ser retorno de medição de Saúde
         if (buffer.length >= 3 && buffer[0] === 0x32) {
-             // Estrutura comum NYJ: [0x32, HR, SPO2, BP_H, BP_L, ...]
-             const hr = buffer[1];
-             const spo2 = buffer[2];
-             
-             if(hr > 0) this.metrics.heartRate = hr;
-             if(spo2 > 0) this.metrics.spo2 = spo2;
-             
-             this.updateMetrics({ heartRate: hr, spo2: spo2, source: 'proprietary' });
+            // Estrutura comum NYJ: [0x32, HR, SPO2, BP_H, BP_L, ...]
+            const hr = buffer[1];
+            const spo2 = buffer[2];
+
+            if (hr > 0) this.metrics.heartRate = hr;
+            if (spo2 > 0) this.metrics.spo2 = spo2;
+
+            this.updateMetrics({ heartRate: hr, spo2: spo2, source: 'proprietary' });
         }
     }
 
     private updateMetrics(data: Partial<RingRealtimeData>) {
         this.metrics = { ...this.metrics, ...data };
-        
+
         // --- FALLBACK HRV (SIMULAÇÃO) ---
         // Se o hardware envia HR mas falha em enviar HRV (comum em NYJ01 com firmware antigo),
         // calculamos uma "Pontuação de Estresse" estimada baseada no HR para a UI não ficar vazia.
@@ -534,7 +535,21 @@ class RingController {
             const simulatedHRV = Math.max(10, Math.min(95, 120 - this.metrics.heartRate));
             this.metrics.hrv = Math.floor(simulatedHRV);
         }
+
+        if (data.hrv === undefined && this.metrics.hrv) {
+            this.metrics.source = 'standard';
+        }
         
+        // --- ENVIAR PARA BUFFER (Batch) ---
+        
+        if (this.currentUserId) {
+            if (data.heartRate) this.addToBuffer({ type: 'heart', value: data.heartRate.toString(), source: 'ring' });
+            if (data.spo2) this.addToBuffer({ type: 'spo2', value: data.spo2.toString(), source: 'ring' });
+            if (data.steps) this.addToBuffer({ type: 'steps', value: data.steps.toString(), source: 'ring' });
+            if (data.temperature) this.addToBuffer({ type: 'temp', value: data.temperature.toString(), source: 'ring' });
+            if (data.hrv) this.addToBuffer({ type: 'hrv', value: data.hrv.toString(), source: data.source === 'proprietary' ? 'ring' : 'estimated', confidence: data.source === 'proprietary' ? 1 : 0.7 });
+            if (data.bloodPressure) this.addToBuffer({ type: 'pressure', value: `${data.bloodPressure.sys}/${data.bloodPressure.dia}`, source: 'ring' });
+        }
         if (this.dataCallback) this.dataCallback(this.metrics);
         window.dispatchEvent(new CustomEvent("ring-data", { detail: this.metrics }));
     }
@@ -542,6 +557,46 @@ class RingController {
     // ----------------------------------------------------------------
     // 4. UTILITÁRIOS
     // ----------------------------------------------------------------
+
+    // --- BUFFER HELPERS ---
+    private startBufferFlush() {
+        if (this.bufferInterval) return;
+        this.bufferInterval = setInterval(() => {
+            this.flushMeasureBuffer();
+        }, this.BUFFER_FLUSH_INTERVAL_MS);
+    }
+
+    private stopBufferFlush() {
+        if (this.bufferInterval) clearInterval(this.bufferInterval);
+        this.bufferInterval = null;
+    }
+
+    private addToBuffer(measure: MeasureBatch) {
+        this.measureBuffer.push(measure);
+
+        // Se atingiu o tamanho máximo, salva imediatamente
+        if (this.measureBuffer.length >= this.BUFFER_MAX_SIZE) {
+            this.flushMeasureBuffer();
+        }
+    }
+
+    private async flushMeasureBuffer() {
+        if (this.measureBuffer.length === 0) return;
+
+        const batch = [...this.measureBuffer];
+        this.measureBuffer = [];
+
+        try {
+            const result = await api.saveBatchMeasures(batch);
+            if (result.errors.length > 0) {
+                console.warn("[Ring] Batch errors:", result.errors);
+            }
+        } catch (e) {
+            console.error("[Ring] Batch flush failed:", e);
+            // Em caso de falha, reencaixa no buffer
+            this.measureBuffer.unshift(...batch);
+        }
+    }
 
     private queueCommand(task: () => Promise<void>) {
         return new Promise<void>((resolve, reject) => {
@@ -559,7 +614,7 @@ class RingController {
         if (task) {
             try { await task(); } catch (e) { console.error("[Ring] Cmd Error", e); }
         }
-        await this.delay(100); 
+        await this.delay(100);
         this.isQueueProcessing = false;
         if (this.commandQueue.length > 0) this.processQueue();
     }
@@ -573,29 +628,30 @@ class RingController {
         const match = hexString.match(/.{1,2}/g);
         if (!match) return;
         const bytes = new Uint8Array(match.map(v => parseInt(v, 16)));
-        
+
         try {
             if (this.writeChar.properties.writeWithoutResponse) {
                 await this.writeChar.writeValueWithoutResponse(bytes);
             } else {
                 await this.writeChar.writeValueWithResponse(bytes);
             }
-        } catch (e) { 
-            console.error(`[Ring] Write Fail:`, e); 
+        } catch (e) {
+            console.error(`[Ring] Write Fail:`, e);
         }
     }
 
     private delay(ms: number) { return new Promise(res => setTimeout(res, ms)); }
-    
+
     private onDisconnect() {
         console.log("[Ring] Desconectado.");
         if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
         if (this.backgroundSyncInterval) clearInterval(this.backgroundSyncInterval);
-        
+        this.stopBufferFlush();
+
         this.writeChar = null;
         this.batteryChar = null;
         this.server = null;
-        
+
         // Notifica UI
         window.dispatchEvent(new CustomEvent("ring-connection-status", { detail: { connected: false } }));
     }

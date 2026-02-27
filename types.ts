@@ -47,6 +47,22 @@ export interface Measure {
   created_at?: string; // Para ordenação na timeline
 }
 
+export type MeasureSource = 'ring' | 'estimated' | 'manual';
+
+export interface MeasureBatch {
+    type: Measure['type'];
+    value: string;
+    source: MeasureSource;
+    confidence?: number;
+    deviceTimestamp?: string;
+}
+
+export interface MeasureValidationResult {
+    isValid: boolean;
+    error?: string;
+    normalizedValue?: string;
+}
+
 export interface PatientSummary {
   heartRate: string;
   steps: string;

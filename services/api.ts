@@ -1,6 +1,6 @@
 
 import { supabase } from './supabaseClient';
-import { Measure, DoctorMetric, UrgentCase, User, ChatMessage, PatientSummary, FamilyMember, Meal, SleepSession, SleepStage, NutritionReport, MedicalActionPlan, Prescription, CallLog, DoctorReview, PatientFullProfile, TimelineEvent, Appointment, Reminder, VideoEntry, SuggestedReminder, NutritionInsight, DoctorAvailabilityBlock, DaySlotStatus, ClinicalCondition, LabExam, LabMarker } from '../types';
+import { Measure, DoctorMetric, UrgentCase, User, ChatMessage, PatientSummary, FamilyMember, Meal, SleepSession, SleepStage, NutritionReport, MedicalActionPlan, Prescription, CallLog, DoctorReview, PatientFullProfile, TimelineEvent, Appointment, Reminder, VideoEntry, SuggestedReminder, NutritionInsight, DoctorAvailabilityBlock, DaySlotStatus, ClinicalCondition, LabExam, LabMarker, MeasureBatch, MeasureValidationResult } from '../types';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { offlineService, STORES_CONST } from './offline';
 
@@ -27,13 +27,13 @@ export const formatError = (error: any): string => {
 // Helper interno para formatar data relativa
 const formatTimeAgo = (isoString: string) => {
     if (!isoString || isoString === 'Nunca') return 'Desconhecido';
-    if (!isoString.includes('T')) return isoString; 
-    
+    if (!isoString.includes('T')) return isoString;
+
     const date = new Date(isoString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
-    
+
     if (diffMins < 1) return 'Agora mesmo';
     if (diffMins < 60) return `${diffMins} min atrás`;
     const diffHours = Math.floor(diffMins / 60);
@@ -48,7 +48,7 @@ const mapProfileToUser = (p: any): User | null => {
         id: p.id,
         name: p.name,
         email: p.email,
-        role: p.role ? p.role.toLowerCase() : 'patient', 
+        role: p.role ? p.role.toLowerCase() : 'patient',
         avatarUrl: p.avatar_url,
         doctorId: p.doctor_id,
         deviceConnected: !!p.device_connected,
@@ -77,7 +77,7 @@ export const api = {
     // --- AUTHENTICATION & ACCOUNT ---
     login: async (email: string, pass: string, role: 'patient' | 'doctor'): Promise<User> => {
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password: pass });
-        
+
         if (authError) {
             if (authError.message.includes('Invalid login credentials')) {
                 throw new Error("E-mail ou senha incorretos.");
@@ -97,7 +97,7 @@ export const api = {
             .maybeSingle();
 
         const mappedUser = mapProfileToUser(profile);
-        
+
         if (!mappedUser) {
             await supabase.auth.signOut();
             throw new Error("Perfil de usuário não encontrado. Entre em contato com o suporte.");
@@ -108,36 +108,36 @@ export const api = {
 
     register: async (email: string, pass: string, name: string, role: 'patient' | 'doctor'): Promise<User> => {
         const { data: authData, error: authError } = await supabase.auth.signUp({
-            email, 
-            password: pass, 
-            options: { 
+            email,
+            password: pass,
+            options: {
                 data: { name, role },
-                emailRedirectTo: window.location.origin 
+                emailRedirectTo: window.location.origin
             }
         });
-        
+
         if (authError) {
             if (authError.message.includes('already registered')) {
                 throw new Error("Este e-mail já está em uso.");
             }
             throw new Error(formatError(authError));
         }
-        
+
         if (authData.user && !authData.session) {
             throw new Error("Cadastro realizado! Verifique seu e-mail para confirmar a conta.");
         }
-        
+
         if (!authData.user) throw new Error("Erro ao criar usuário.");
 
-        const newProfileData = { 
-            id: authData.user.id, 
-            email, 
-            name, 
-            role: role.toLowerCase(), 
-            device_connected: false, 
-            last_sync: new Date().toISOString() 
+        const newProfileData = {
+            id: authData.user.id,
+            email,
+            name,
+            role: role.toLowerCase(),
+            device_connected: false,
+            last_sync: new Date().toISOString()
         };
-        
+
         const { error: insertError } = await supabase.from('profiles').insert([newProfileData]);
         if (insertError) throw new Error(`Erro ao criar perfil: ${insertError.message}`);
 
@@ -171,7 +171,7 @@ export const api = {
     },
 
     resetPassword: async (email: string): Promise<void> => {
-        const { error } = await supabase.auth.resetPasswordForEmail(email, { 
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
             redirectTo: window.location.origin
         });
         if (error) throw new Error(formatError(error));
@@ -184,7 +184,7 @@ export const api = {
     getSession: async (): Promise<User | null> => {
         const { data } = await supabase.auth.getSession();
         if (!data.session?.user) return null;
-        
+
         try {
             const { data: dbProfile } = await supabase.from('profiles').select('*').eq('id', data.session.user.id).maybeSingle();
             if (dbProfile) {
@@ -194,10 +194,10 @@ export const api = {
         } catch (e) {
             console.warn("Offline: Reading profile from cache");
         }
-        
+
         const cachedProfiles = await offlineService.getCachedData<any>(STORES_CONST.PROFILE);
         if (cachedProfiles.length > 0) return mapProfileToUser(cachedProfiles[0]);
-        
+
         return null;
     },
 
@@ -219,20 +219,104 @@ export const api = {
         } catch (e) {
             console.warn("Offline: Reading measures from cache");
         }
-        
+
         const cached = await offlineService.getCachedData<any>(STORES_CONST.MEASURES);
-        return cached.sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                     .map(m => ({ id: m.id, title: m.type, value: m.value, date: new Date(m.created_at).toLocaleDateString('pt-BR'), type: m.type, trend: 'up', created_at: m.created_at }));
+        return cached.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            .map(m => ({ id: m.id, title: m.type, value: m.value, date: new Date(m.created_at).toLocaleDateString('pt-BR'), type: m.type, trend: 'up', created_at: m.created_at }));
     },
+
+    validateMeasure: (type: Measure['type'], value: string): MeasureValidationResult => {
+        const numValue = parseFloat(value);
+
+        const rules: Record<Measure['type'], { min: number, max: number, unit?: string }> = {
+            heart: { min: 30, max: 220 },
+            spo2: { min: 70, max: 100 },
+            hrv: { min: 10, max: 200 },
+            temp: { min: 32, max: 42 },
+            pressure: { min: 0, max: 300 },
+            steps: { min: 0, max: 100000 },
+            sleep: { min: 0, max: 24 },
+            calories: { min: 0, max: 10000 },
+            glucose: { min: 20, max: 600 },
+            stress: { min: 0, max: 100 }
+        };
+
+        if (type === 'pressure') {
+            const parts = value.split('/');
+            if (parts.length !== 2) return { isValid: false, error: 'Formato inválido. Use: 120/80' };
+            const sys = parseFloat(parts[0]);
+            const dia = parseFloat(parts[1]);
+            if (isNaN(sys) || isNaN(dia)) return { isValid: false, error: 'Valores devem ser numéricos' };
+            if (sys < 60 || sys > 250) return { isValid: false, error: 'Sistólica fora do intervalo (60-250)' };
+            if (dia < 40 || dia > 150) return { isValid: false, error: 'Diastólica fora do intervalo (40-150)' };
+            return { isValid: true, normalizedValue: `${Math.round(sys)}/${Math.round(dia)}` };
+        }
+
+        if (isNaN(numValue)) return { isValid: false, error: 'Valor deve ser numérico' };
+
+        const rule = rules[type];
+        if (!rule) return { isValid: false, error: 'Tipo de medida desconhecido' };
+
+        if (numValue < rule.min || numValue > rule.max) {
+            return { isValid: false, error: `Valor fora do intervalo (${rule.min}-${rule.max})` };
+        }
+
+        return { isValid: true, normalizedValue: Math.round(numValue).toString() };
+    },
+
+    saveBatchMeasures: async (batch: MeasureBatch[]): Promise<{ saved: number, errors: string[] }> => {
+        const user = await api.getUser();
+        const now = new Date().toISOString();
+        const errors: string[] = [];
+        let saved = 0;
+
+        const validMeasures = batch.filter(measure => {
+            const validation = api.validateMeasure(measure.type, measure.value);
+            if (!validation.isValid) {
+                errors.push(`${measure.type}: ${validation.error}`);
+                return false;
+            }
+            return true;
+        });
+
+        if (validMeasures.length === 0) {
+            return { saved: 0, errors };
+        }
+
+        const payload = validMeasures.map(measure => {
+            const validation = api.validateMeasure(measure.type, measure.value);
+            return {
+                user_id: user.id,
+                type: measure.type,
+                value: validation.normalizedValue || measure.value,
+                source: measure.source || 'ring',
+                confidence: measure.confidence,
+                device_timestamp: measure.deviceTimestamp,
+                created_at: measure.deviceTimestamp || now
+            };
+        });
+
+        try {
+            const { error } = await supabase.from('measures').insert(payload);
+            if (error) throw error;
+            saved = payload.length;
+        } catch (e: any) {
+            console.error('[Batch Insert Error]', e);
+            errors.push(`Falha ao salvar no banco: ${e.message}`);
+        }
+
+        return { saved, errors };
+    },
+
 
     saveSingleMeasure: async (type: Measure['type'], value: string, isSyncing = false): Promise<void> => {
         const user = await api.getUser();
         const payload = { user_id: user.id, type, value, created_at: new Date().toISOString() };
-        
+
         if (!navigator.onLine && !isSyncing) {
             offlineService.addToQueue('SAVE_MEASURE', { type, value });
             const cached = await offlineService.getCachedData<any>(STORES_CONST.MEASURES);
-            cached.push({...payload, id: `temp_${Date.now()}`});
+            cached.push({ ...payload, id: `temp_${Date.now()}` });
             await offlineService.cacheData(STORES_CONST.MEASURES, cached);
             return;
         }
@@ -257,12 +341,12 @@ export const api = {
             const measures = data || [];
             const getVal = (type: string) => measures.find((m: any) => m.type === type)?.value;
 
-            return { 
-                heartRate: getVal('heart') || '--', 
-                steps: getVal('steps') || '0', 
-                sleep: getVal('sleep') || '--', 
-                calories: getVal('calories') || '0', 
-                spo2: getVal('spo2') || '--', 
+            return {
+                heartRate: getVal('heart') || '--',
+                steps: getVal('steps') || '0',
+                sleep: getVal('sleep') || '--',
+                calories: getVal('calories') || '0',
+                spo2: getVal('spo2') || '--',
                 bloodPressure: getVal('pressure') || '--',
                 stress: getVal('stress') || '--'
             };
@@ -300,11 +384,11 @@ export const api = {
         const { data: chatHistory } = await supabase.from('chat_history').select('*').eq('user_id', patientId).order('created_at', { ascending: false }).limit(20);
         const { data: measures } = await supabase.from('measures').select('*').eq('user_id', patientId).order('created_at', { ascending: false }).limit(20);
 
-        return { 
-            basic: { id: p.id, name: p.name, age: p.birth_date ? (new Date().getFullYear() - new Date(p.birth_date).getFullYear()) : 30, condition: p.condition || 'Estável', risk: p.status === 'SOS' ? 'Crítico' : 'Baixo', glucose: '--', timestamp: p.last_sync, status: p.status === 'SOS' ? 'SOS' : 'online' }, 
-            biometrics: { height: p.height, weight: p.weight, bmi: '24', age: p.birth_date ? (new Date().getFullYear() - new Date(p.birth_date).getFullYear()) : 30 }, 
-            stats: { healthScore: 80, consistency: 90, activityGraph: [1,2,3,4,5,6,7], totalInteractions: chatHistory?.length || 0 }, 
-            timeline: (chatHistory || []).map(t => ({ id: t.id, type: 'chat', title: t.sender === 'user' ? 'Mensagem do Paciente' : 'Resposta da IA', description: t.text, timestamp: t.created_at, icon: 'chat' })), 
+        return {
+            basic: { id: p.id, name: p.name, age: p.birth_date ? (new Date().getFullYear() - new Date(p.birth_date).getFullYear()) : 30, condition: p.condition || 'Estável', risk: p.status === 'SOS' ? 'Crítico' : 'Baixo', glucose: '--', timestamp: p.last_sync, status: p.status === 'SOS' ? 'SOS' : 'online' },
+            biometrics: { height: p.height, weight: p.weight, bmi: '24', age: p.birth_date ? (new Date().getFullYear() - new Date(p.birth_date).getFullYear()) : 30 },
+            stats: { healthScore: 80, consistency: 90, activityGraph: [1, 2, 3, 4, 5, 6, 7], totalInteractions: chatHistory?.length || 0 },
+            timeline: (chatHistory || []).map(t => ({ id: t.id, type: 'chat', title: t.sender === 'user' ? 'Mensagem do Paciente' : 'Resposta da IA', description: t.text, timestamp: t.created_at, icon: 'chat' })),
             nutritionReport: undefined, meals: [], prescriptionHistory: [], videos: [], reminders: [],
             measures: (measures || []).map(m => ({
                 id: m.id,
@@ -349,7 +433,7 @@ export const api = {
         const { data: pts } = await supabase.from('profiles').select('*').eq('doctor_id', user.id).eq('role', 'patient');
         return (pts || []).map(p => ({ id: p.id, name: p.name, age: p.birth_date ? (new Date().getFullYear() - new Date(p.birth_date).getFullYear()) : 0, risk: p.status === 'SOS' ? 'Crítico' : 'Baixo', condition: p.condition || (p.status === 'SOS' ? 'Emergência' : 'Estável'), glucose: '--', timestamp: p.last_sync || new Date().toISOString(), status: p.status === 'SOS' ? 'SOS' : 'online', avatarUrl: p.avatar_url }));
     },
-    getPatientLiveData: async (): Promise<{id: string, name: string, lastHeartRate: string, lastSync: string} | null> => {
+    getPatientLiveData: async (): Promise<{ id: string, name: string, lastHeartRate: string, lastSync: string } | null> => {
         const user = await api.getUser();
         const { data } = await supabase.from('profiles').select('id, name, last_sync').eq('doctor_id', user.id).limit(1).maybeSingle();
         if (!data) return null;
@@ -371,11 +455,11 @@ export const api = {
     },
 
     // --- MEDICAL RECORDS & EXAMS (SMART SCAN) ---
-    getMedicalRecords: async (userId: string): Promise<{conditions: ClinicalCondition[], exams: LabExam[]}> => {
+    getMedicalRecords: async (userId: string): Promise<{ conditions: ClinicalCondition[], exams: LabExam[] }> => {
         // Fallback mock if table doesn't exist yet, or proper Supabase select
         try {
             const { data: conditions } = await supabase.from('medical_conditions').select('*').eq('user_id', userId);
-            const { data: exams } = await supabase.from('lab_exams').select('*').eq('user_id', userId).order('date', {ascending: false});
+            const { data: exams } = await supabase.from('lab_exams').select('*').eq('user_id', userId).order('date', { ascending: false });
             return { conditions: conditions || [], exams: exams || [] };
         } catch (e) {
             console.warn("Medical Records Tables might be missing, returning empty.");
@@ -390,14 +474,14 @@ export const api = {
 
     analyzeMedicalExam: async (imageFile: File): Promise<any> => {
         const ai = new GoogleGenerativeAI({ apiKey: import.meta.env.VITE_GOOGLE_API_KEY as string });
-        
+
         // Convert File to Base64
         const base64 = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as string);
             reader.readAsDataURL(imageFile);
         });
-        
+
         const imageData = base64.split(',')[1];
 
         const prompt = `
@@ -508,16 +592,16 @@ export const api = {
         } catch (e) {
             console.warn("Offline: Reading chat from cache");
         }
-        
+
         const cached = await offlineService.getCachedData<any>(STORES_CONST.CHAT);
-        return cached.sort((a,b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                     .map(row => ({ sender: row.sender, text: row.text, time: row.time || new Date(row.created_at).toLocaleTimeString('pt-BR'), attachmentUrl: row.attachment_url, attachmentType: row.attachment_type, suggestedReminder: row.suggested_reminder }));
+        return cached.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+            .map(row => ({ sender: row.sender, text: row.text, time: row.time || new Date(row.created_at).toLocaleTimeString('pt-BR'), attachmentUrl: row.attachment_url, attachmentType: row.attachment_type, suggestedReminder: row.suggested_reminder }));
     },
 
     saveChatMessage: async (message: ChatMessage, targetUserId?: string, isSyncing = false): Promise<void> => {
         const user = await api.getUser();
         const payload = { user_id: targetUserId || user.id, sender: message.sender, text: message.text, time: message.time, attachment_url: message.attachmentUrl, attachment_type: message.attachmentType, suggested_reminder: message.suggestedReminder, created_at: new Date().toISOString() };
-        
+
         if (!navigator.onLine && !isSyncing) {
             offlineService.addToQueue('SEND_CHAT', message);
             return;
@@ -556,11 +640,11 @@ export const api = {
         try {
             const { data } = await supabase.from('meals').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(1).maybeSingle();
             if (data) return { ...data, userId: data.user_id };
-        } catch(e) {}
-        
+        } catch (e) { }
+
         const cached = await offlineService.getCachedData<any>(STORES_CONST.MEALS);
         if (cached.length > 0) {
-            const last = cached.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+            const last = cached.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
             return { ...last, userId: last.user_id };
         }
         return null;
@@ -572,17 +656,17 @@ export const api = {
                 await offlineService.cacheData(STORES_CONST.MEALS, data);
                 return (data || []).map(m => ({ ...m, userId: m.user_id }));
             }
-        } catch (e) {}
-        
+        } catch (e) { }
+
         const cached = await offlineService.getCachedData<any>(STORES_CONST.MEALS);
         return cached.map(m => ({ ...m, userId: m.user_id }));
     },
     getNutritionReport: async (userId: string): Promise<NutritionReport> => ({ dailyAverageCalories: 2000, totalMealsLogged: 10, macroDistribution: { protein: 30, carbs: 50, fat: 20 }, score: 80, insights: [], streakDays: 5 }),
-    
+
     saveMeal: async (mealData: Omit<Meal, 'id' | 'userId'>, isSyncing = false): Promise<void> => {
         const user = await api.getUser();
         const payload = { user_id: user.id, image: mealData.image, foods: mealData.foods, calories: mealData.calories, protein: mealData.protein, carbs: mealData.carbs, fat: mealData.fat, portion: mealData.portion, timestamp: new Date().toISOString() };
-        
+
         if (!navigator.onLine && !isSyncing) {
             offlineService.addToQueue('SAVE_MEAL', mealData);
             return;
@@ -676,7 +760,7 @@ export const api = {
         if (error) throw new Error(`Erro no upload do anexo: ${error.message}`);
         return supabase.storage.from('avatars').getPublicUrl(fileName).data.publicUrl;
     },
-    uploadVideo: async (blob: Blob, patientId: string): Promise<{videoUrl: string, thumbnailUrl?: string}> => {
+    uploadVideo: async (blob: Blob, patientId: string): Promise<{ videoUrl: string, thumbnailUrl?: string }> => {
         const fileName = `videos/${patientId}/${Date.now()}.webm`;
         const { error } = await supabase.storage.from('avatars').upload(fileName, blob);
         if (error) throw error;
@@ -690,7 +774,7 @@ export const api = {
     checkSystemHealth: async (): Promise<{ online: boolean, latency: number, message?: string }> => {
         const start = Date.now();
         if (!navigator.onLine) return { online: false, latency: 0, message: 'Sem Conexão' };
-        
+
         try {
             const { error } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
             return { online: !error, latency: Date.now() - start, message: error ? error.message : 'Operacional' };
