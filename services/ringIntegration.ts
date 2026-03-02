@@ -462,26 +462,22 @@ class RingController {
                 const steps = parseInt(parts[1]);
                 if (!isNaN(steps)) {
                     this.updateMetrics({ steps, source: 'proprietary' });
-
-                    // PERSISTÊNCIA EM BACKGROUND PARA PASSOS
-                    // Se recebemos passos e não estamos em modo "realtime stream" explícito (ou seja, foi o background sync que pediu)
-                    // podemos salvar. Para simplificar, sempre salvamos passos se forem válidos, pois mudam lentamente.
-                    updated = true;
-
-                }
-            }
-
-            // Tenta capturar HRV/Fadiga se o anel mandar resposta texto
-            if (text.includes("MEAS_HRV=") || text.includes("MEAS_FATIGUE=")) {
-                const val = parseInt(text.split('=')[1]);
-                if (!isNaN(val) && val > 0) {
-                    this.updateMetrics({ hrv: val, source: 'proprietary' });
                     updated = true;
                 }
             }
-
-            if (updated) console.log(`[Ring] Dados Texto Atualizados: ${text}`);
         }
+
+        // Tenta capturar HRV/Fadiga se o anel mandar resposta texto
+        if (text.includes("MEAS_HRV=") || text.includes("MEAS_FATIGUE=")) {
+            const val = parseInt(text.split('=')[1]);
+            if (!isNaN(val) && val > 0) {
+                this.updateMetrics({ hrv: val, source: 'proprietary' });
+                updated = true;
+            }
+        }
+
+        if (updated) console.log(`[Ring] Dados Texto Atualizados: ${text}`);
+    }
 
     private parseBinaryProtocol(data: DataView, uuid: string) {
         const buffer = new Uint8Array(data.buffer);

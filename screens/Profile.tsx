@@ -106,6 +106,28 @@ const Profile: React.FC<ProfileProps> = ({ onConnectDeviceClick, onLogout, onEdi
                 <button onClick={onLogout} className="w-full py-4 text-slate-500 dark:text-slate-400 font-bold bg-slate-100 dark:bg-slate-800/50 rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">Sair da Conta</button>
             </div>
 
+            {/* DEBUG: Botão de teste do Batch */}
+            <button 
+                onClick={async () => {
+                    try {
+                        const batch = [
+                            { type: 'heart', value: '75', source: 'ring' },
+                            { type: 'spo2', value: '98', source: 'ring' },
+                            { type: 'hrv', value: '65', source: 'estimated', confidence: 0.7 },
+                            { type: 'pressure', value: '120/80', source: 'ring' }
+                        ];
+                        const result = await api.saveBatchMeasures(batch);
+                        alert(`✅ Batch Test!\n${result.saved} medidas salvas\nErros: ${result.errors.length}`);
+                        console.log('Batch result:', result);
+                    } catch (e) {
+                        alert(`❌ Erro no teste: ${e}`);
+                    }
+                }}
+                className="w-full p-3 bg-slate-800 dark:bg-slate-700 text-xs text-slate-400 rounded-lg hover:bg-slate-700 transition-colors mb-4"
+            >
+                🧪 Test Batch Insert (Debug)
+            </button>
+
             {showDeleteModal && (
                 <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 w-full max-w-sm border border-red-500/20 shadow-2xl">

@@ -146,6 +146,23 @@ const App: React.FC = () => {
     }
   };
 
+  const testBatchMeasures = async () => {
+    try {
+      const { MeasureBatch } = await import('./types');
+      const batch = [
+        { type: 'heart', value: '75', source: 'ring' },
+        { type: 'spo2', value: '98', source: 'ring' },
+        { type: 'hrv', value: '65', source: 'estimated', confidence: 0.7 },
+        { type: 'pressure', value: '120/80', source: 'ring' }
+      ];
+      const result = await api.saveBatchMeasures(batch);
+      alert(`✅ Batch salvo! ${result.saved} medidas. Erros: ${result.errors.length}`);
+      console.log('Resultado:', result);
+    } catch (e) {
+      alert(`❌ Erro: ${e}`);
+    }
+  };
+
   const getDynamicBackground = () => {
       if (activeView === 'resetPassword') return 'bg-slate-950';
       if (user?.role === 'doctor') return 'bg-slate-900';

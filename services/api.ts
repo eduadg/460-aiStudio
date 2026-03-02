@@ -289,10 +289,7 @@ export const api = {
                 user_id: user.id,
                 type: measure.type,
                 value: validation.normalizedValue || measure.value,
-                source: measure.source || 'ring',
-                confidence: measure.confidence,
-                device_timestamp: measure.deviceTimestamp,
-                created_at: measure.deviceTimestamp || now
+                created_at: now
             };
         });
 
