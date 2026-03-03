@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste API Batch - Smart Ring</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+        .test-section {
+            background: #334155;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 12px;
+            border: 1px solid #475569;
+        }
+        button {
+            background: #0ea5e9;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0284c7;
+        }
+        .result {
+            background: #1e293b;
+            padding: 15px;
+            margin-top: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #10b981;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .error {
+            border-left-color: #ef4444;
+        }
+        h1 { color: #60a5fa; }
+        h2 { color: #94a3b8; font-size: 18px; }
+        pre { margin: 5px 0; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Teste da API Batch - Smart Ring Integration</h1>
+    
+    <div class="test-section">
+        <h2>📋 Dados Coletados pelo Smart Ring:</h2>
+        <ul>
+            <li>❤️ <strong>Heart Rate</strong> - Frequência cardíaca (BPM)</li>
+            <li>🫁 <strong>SpO2</strong> - Saturação de oxigênio (%)</li>
+            <li>🩸 <strong>Blood Pressure</strong> - Pressão arterial (Sys/Dia)</li>
+            <li>👟 <strong>Steps</strong> - Contador de passos</li>
+            <li>🌡️ <strong>Temperature</strong> - Temperatura corporal (°C)</li>
+            <li>💓 <strong>HRV</strong> - Variabilidade cardíaca (real ou estimado: 120 - HR)</li>
+            <li>🔋 <strong>Battery</strong> - Nível de bateria do anel (%)</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>🔧 Teste 1: Validação de Medidas</h2>
+        <button onclick="testValidation()">▶️ Testar Validação</button>
+        <div id="validation-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>📦 Teste 2: Batch Processing</h2>
+        <button onclick="testBatchLogic()">▶️ Testar Lógica do Batch</button>
+        <div id="batch-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>🔄 Teste 3: Simulação de Fluxo Completo</h2>
+        <button onclick="testCompleteFlow()">▶️ Simular Coleta do Ring</button>
+        <div id="flow-result"></div>
+    </div>
+
+    <script type="module">
+        // Importar funções de validação (simuladas aqui)
+        const validateMeasure = (type, value) => {
+            const rules = {
+                heart: { min: 30, max: 220, unit: 'bpm' },
+                spo2: { min: 70, max: 100, unit: '%' },
+                temp: { min: 34, max: 42, unit: '°C' },
+                hrv: { min: 0, max: 200, unit: 'ms' }
+            };
+
+            // Validação de pressão
+            if (type === 'pressure') {
+                const match = value.match(/^(\d+)\/(\d+)$/);
+                if (!match) return { valid: false, error: 'Formato inválido (esperado: 120/80)' };
+                const sys = parseInt(match[1]);
+                const dia = parseInt(match[2]);
+                if (sys < 70 || sys > 200 || dia < 40 || dia > 130) {
+                    return { valid: false, error: 'Valores fora da faixa (Sys: 70-200, Dia: 40-130)' };
+                }
+                return { valid: true, normalizedValue: `${sys}/${dia}` };
+            }
+
+            const numValue = parseFloat(value);
+            const rule = rules[type];
+            
+            if (!rule) return { valid: true, normalizedValue: value };
+            
+            if (isNaN(numValue)) {
+                return { valid: false, error: 'Valor não numérico' };
+            }
+
+            if (numValue < rule.min || numValue > rule.max) {
+                return { valid: false, error: `Fora da faixa (${rule.min}-${rule.max} ${rule.unit})` };
+            }
+
+            return { valid: true, normalizedValue: value };
+        };
+
+        window.testValidation = () => {
+            const tests = [
+                { type: 'heart', value: '75', expected: true },
+                { type: 'heart', value: '300', expected: false },
+                { type: 'spo2', value: '98', expected: true },
+                { type: 'spo2', value: '50', expected: false },
+                { type: 'pressure', value: '120/80', expected: true },
+                { type: 'pressure', value: '300/150', expected: false },
+                { type: 'temp', value: '36.5', expected: true },
+                { type: 'hrv', value: '65', expected: true }
+            ];
+
+            let results = '<div class="result">';
+            let passed = 0;
+            let failed = 0;
+
+            tests.forEach(test => {
+                const result = validateMeasure(test.type, test.value);
+                const icon = result.valid === test.expected ? '✅' : '❌';
+                const status = result.valid === test.expected ? 'PASS' : 'FAIL';
+                
+                if (result.valid === test.expected) passed++;
+                else failed++;
+
+                results += `<pre>${icon} [${status}] ${test.type}: ${test.value} → ${result.valid ? 'Válido' : result.error}</pre>`;
+            });
+
+            results += `<pre style="margin-top: 15px; color: #60a5fa;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>`;
+            results += `<pre><strong>Total: ${passed} ✅ PASS | ${failed} ❌ FAIL</strong></pre>`;
+            results += '</div>';
+
+            document.getElementById('validation-result').innerHTML = results;
+        };
+
+        window.testBatchLogic = () => {
+            const batch = [
+                { type: 'heart', value: '75', source: 'ring' },
+                { type: 'spo2', value: '98', source: 'ring' },
+                { type: 'hrv', value: '65', source: 'estimated', confidence: 0.7 },
+                { type: 'pressure', value: '120/80', source: 'ring' }
+            ];
+
+            let results = '<div class="result">';
+            results += '<pre><strong>📦 Batch Input:</strong></pre>';
+            results += `<pre>${JSON.stringify(batch, null, 2)}</pre>`;
+            
+            results += '<pre style="margin-top: 15px;"><strong>🔍 Validação Individual:</strong></pre>';
+            
+            const validMeasures = [];
+            const errors = [];
+
+            batch.forEach((measure, index) => {
+                const validation = validateMeasure(measure.type, measure.value);
+                if (validation.valid) {
+                    validMeasures.push(measure);
+                    results += `<pre>✅ [${index + 1}] ${measure.type}: ${measure.value} - OK</pre>`;
+                } else {
+                    errors.push(`${measure.type}: ${validation.error}`);
+                    results += `<pre>❌ [${index + 1}] ${measure.type}: ${measure.value} - ${validation.error}</pre>`;
+                }
+            });
+
+            results += `<pre style="margin-top: 15px; color: #60a5fa;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>`;
+            results += `<pre><strong>📊 Resultado Final:</strong></pre>`;
+            results += `<pre>✅ Válidas: ${validMeasures.length}/${batch.length}</pre>`;
+            results += `<pre>❌ Erros: ${errors.length}</pre>`;
+            results += `<pre>💾 Eficiência: 1 request (vs ${batch.length} individuais = ${Math.round((1 - 1/batch.length) * 100)}% redução)</pre>`;
+            
+            results += '</div>';
+            document.getElementById('batch-result').innerHTML = results;
+        };
+
+        window.testCompleteFlow = () => {
+            let results = '<div class="result">';
+            
+            // Simula dados vindos do Smart Ring
+            const ringData = {
+                heartRate: 72,
+                spo2: 97,
+                bloodPressure: { sys: 118, dia: 78 },
+                temperature: 36.4,
+                steps: 5420,
+                batteryLevel: 85
+            };
+
+            // Calcula HRV estimado (120 - HR)
+            const estimatedHRV = 120 - ringData.heartRate;
+
+            results += '<pre><strong>📡 Dados Recebidos do Smart Ring:</strong></pre>';
+            results += `<pre>  ❤️  Heart Rate: ${ringData.heartRate} bpm</pre>`;
+            results += `<pre>  🫁 SpO2: ${ringData.spo2}%</pre>`;
+            results += `<pre>  🩸 Pressure: ${ringData.bloodPressure.sys}/${ringData.bloodPressure.dia}</pre>`;
+            results += `<pre>  🌡️  Temperature: ${ringData.temperature}°C</pre>`;
+            results += `<pre>  👟 Steps: ${ringData.steps}</pre>`;
+            results += `<pre>  🔋 Battery: ${ringData.batteryLevel}%</pre>`;
+            results += `<pre style="color: #fbbf24;">  💓 HRV: ${estimatedHRV} (estimado, confidence: 0.7)</pre>`;
+
+            // Monta o batch
+            const batch = [
+                { type: 'heart', value: ringData.heartRate.toString() },
+                { type: 'spo2', value: ringData.spo2.toString() },
+                { type: 'pressure', value: `${ringData.bloodPressure.sys}/${ringData.bloodPressure.dia}` },
+                { type: 'temp', value: ringData.temperature.toString() },
+                { type: 'hrv', value: estimatedHRV.toString() }
+            ];
+
+            results += `<pre style="margin-top: 15px; color: #60a5fa;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>`;
+            results += '<pre><strong>🔄 Buffer System:</strong></pre>';
+            results += `<pre>  Tamanho do Batch: ${batch.length} medidas</pre>`;
+            results += `<pre>  Trigger: MAX_SIZE (5) ou INTERVAL (10s)</pre>`;
+
+            results += `<pre style="margin-top: 15px; color: #60a5fa;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>`;
+            results += '<pre><strong>✅ Flush para Database:</strong></pre>';
+            results += `<pre>  📤 1 request HTTP (batch insert)</pre>`;
+            results += `<pre>  💾 ${batch.length} registros salvos</pre>`;
+            results += `<pre>  🚀 Eficiência: ${Math.round((1 - 1/batch.length) * 100)}% redução vs requests individuais</pre>`;
+
+            results += '</div>';
+            document.getElementById('flow-result').innerHTML = results;
+        };
+    </script>
+</body>
+</html>

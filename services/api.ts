@@ -305,7 +305,6 @@ export const api = {
         return { saved, errors };
     },
 
-
     saveSingleMeasure: async (type: Measure['type'], value: string, isSyncing = false): Promise<void> => {
         const user = await api.getUser();
         const payload = { user_id: user.id, type, value, created_at: new Date().toISOString() };

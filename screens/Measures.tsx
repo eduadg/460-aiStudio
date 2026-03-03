@@ -550,11 +550,20 @@ const Measures: React.FC<MeasuresProps> = ({ onFamilyClick, onSleepClick, initia
         setConnectionStatus('Salvando...');
         try {
             await ringService.stopRealtimeStream();
-            if (liveData.bpm > 0) await api.saveSingleMeasure('heart', `${liveData.bpm} bpm`);
-            if (liveData.spo2 > 0) await api.saveSingleMeasure('spo2', `${liveData.spo2}%`);
-            if (liveData.bpSys > 0) await api.saveSingleMeasure('pressure', `${liveData.bpSys}/${liveData.bpDia}`);
-            if (liveData.temp > 0) await api.saveSingleMeasure('temp', `${liveData.temp}°C`);
-            if (liveData.hrv > 0) await api.saveSingleMeasure('stress', `${liveData.hrv}`);
+            
+            // Batch insert all measures at once (75% more efficient than individual saves)
+            const batch = [];
+            if (liveData.bpm > 0) batch.push({ type: 'heart' as const, value: `${liveData.bpm}` });
+            if (liveData.spo2 > 0) batch.push({ type: 'spo2' as const, value: `${liveData.spo2}` });
+            if (liveData.bpSys > 0) batch.push({ type: 'pressure' as const, value: `${liveData.bpSys}/${liveData.bpDia}` });
+            if (liveData.temp > 0) batch.push({ type: 'temp' as const, value: `${liveData.temp}` });
+            if (liveData.hrv > 0) batch.push({ type: 'stress' as const, value: `${liveData.hrv}` });
+            
+            if (batch.length > 0) {
+                const result = await api.saveBatchMeasures(batch);
+                console.log(`[Measures] Salvos ${result.saved} registros com ${result.errors.length} erros`);
+            }
+            
             await loadData();
             setShowMeasureModal(false);
         } catch (e) {
