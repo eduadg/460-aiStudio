@@ -178,8 +178,12 @@ class RingController {
             console.log("[Ring] GATT Conectado. Descobrindo serviços...");
             await this.discoverServicesAndSubscribe();
 
-            // Salva ID para auto-reconexão futura
-            localStorage.setItem(STORAGE_KEY_LAST_DEVICE, this.device.id);
+            // Salva ID + nome para auto-reconexão futura (nome usado como fallback UI)
+            try {
+                localStorage.setItem(STORAGE_KEY_LAST_DEVICE, JSON.stringify({ id: this.device.id, name: this.device.name }));
+            } catch (err) {
+                localStorage.setItem(STORAGE_KEY_LAST_DEVICE, this.device.id);
+            }
 
             // Iniciar sequência de inicialização
             this.startKeepAlive();
@@ -200,12 +204,24 @@ class RingController {
     // --- NOVA LÓGICA DE AUTO-RECONEXÃO ---
     async tryAutoReconnect(userId: string): Promise<boolean> {
         this.currentUserId = userId;
-        const lastId = localStorage.getItem(STORAGE_KEY_LAST_DEVICE);
-        if (!lastId) return false;
+        const raw = localStorage.getItem(STORAGE_KEY_LAST_DEVICE);
+        if (!raw) return false;
+
+        let lastId: string | null = null;
+        let lastName: string | null = null;
+        try {
+            const parsed = JSON.parse(raw);
+            lastId = parsed?.id ?? null;
+            lastName = parsed?.name ?? null;
+        } catch (e) {
+            lastId = raw; // legacy string
+        }
 
         const nav = navigator as any;
         if (!nav.bluetooth || !nav.bluetooth.getDevices) {
             console.log("[Ring] getDevices não suportado neste navegador.");
+            // Notifica a UI que auto-reconexão não é suportada para que um fluxo manual seja exibido
+            window.dispatchEvent(new CustomEvent("ring-auto-reconnect-unsupported", { detail: { reason: 'no-getDevices', name: lastName } }));
             return false;
         }
 
@@ -418,9 +434,9 @@ class RingController {
             }
         }
 
-        // Hex Debug
-        // const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
-        // window.dispatchEvent(new CustomEvent("ring-debug", { detail: { text: "", hex, isAscii: false, uuid } }));
+        // Hex Debug - envia também o dump hex para inspeção no console
+        const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
+        window.dispatchEvent(new CustomEvent("ring-debug", { detail: { text: "", hex, isAscii: false, uuid } }));
 
         this.parseBinaryProtocol(dataView, uuid);
     }
