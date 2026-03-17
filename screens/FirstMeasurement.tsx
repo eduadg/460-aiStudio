@@ -71,7 +71,8 @@ const FirstMeasurement: React.FC<FirstMeasurementProps> = ({ onComplete, user })
             
             if (result.success) {
                 setDevice(scannedDevice);
-                await api.updateDeviceStatus(true, 80);
+                const battery = ringService.getLatestMetrics().batteryLevel ?? scannedDevice.batteryLevel ?? 0;
+                await api.updateDeviceStatus(true, battery);
                 setStep('connected');
                 setLogs(prev => [...prev, "Conectado com sucesso!"]);
             } else {
@@ -155,7 +156,8 @@ const FirstMeasurement: React.FC<FirstMeasurementProps> = ({ onComplete, user })
             bloodPressure: realBP ? `${realBP.sys}/${realBP.dia}` : '--'
         };
 
-        await api.completeFirstMeasurement(finalSummary, 80);
+        const battery = ringService.getLatestMetrics().batteryLevel ?? 0;
+        await api.completeFirstMeasurement(finalSummary, battery);
         setResults(finalSummary);
         setStep('results');
     };

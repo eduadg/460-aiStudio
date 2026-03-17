@@ -95,6 +95,7 @@ class RingController {
     private server: BluetoothRemoteGATTServer | null = null;
 
     private writeChar: BluetoothRemoteGATTCharacteristic | null = null;
+    private writeCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
     private batteryChar: BluetoothRemoteGATTCharacteristic | null = null;
 
     // Controle de fluxo
@@ -111,6 +112,7 @@ class RingController {
     private readonly BUFFER_FLUSH_INTERVAL_MS = 10000;
 
     private dataCallback: ((data: RingRealtimeData) => void) | null = null;
+    private packetStats: Record<string, number> = {};
 
     // Estado Atual dos Dados
     private metrics: RingRealtimeData = {
@@ -126,6 +128,21 @@ class RingController {
 
     constructor() {
         this.processQueue = this.processQueue.bind(this);
+        this.exposeDebugHelpers();
+    }
+
+    private exposeDebugHelpers() {
+        if (typeof window === 'undefined') return;
+        const w = window as any;
+
+        // Helper global para testes rápidos no console web
+        if (!w.ringSendCommand) {
+            w.ringSendCommand = async (command: string) => this.sendCommand(command);
+        }
+
+        if (!w.ringGetLatestMetrics) {
+            w.ringGetLatestMetrics = () => this.getLatestMetrics();
+        }
     }
 
     // ----------------------------------------------------------------
@@ -258,15 +275,82 @@ class RingController {
         const services = await this.server.getPrimaryServices();
 
         let foundWrite = false;
+        const writableCharacteristics: string[] = [];
+
+        console.groupCollapsed(`[Ring] BLE Discovery: ${services.length} serviço(s)`);
+        window.dispatchEvent(new CustomEvent("ring-ble-discovery", {
+            detail: {
+                stage: 'start',
+                totalServices: services.length,
+                deviceId: this.device?.id,
+                deviceName: this.device?.name || 'Smart Ring'
+            }
+        }));
 
         for (const service of services) {
             const serviceUuid = service.uuid.toLowerCase();
+            console.log(`[Ring] SERVICE: ${serviceUuid}`);
 
             const chars = await service.getCharacteristics();
+            window.dispatchEvent(new CustomEvent("ring-ble-discovery", {
+                detail: {
+                    stage: 'service',
+                    serviceUuid,
+                    characteristicCount: chars.length
+                }
+            }));
 
             for (const char of chars) {
                 const uuid = char.uuid.toLowerCase();
                 const props = char.properties;
+                const propertySummary = {
+                    read: !!props.read,
+                    write: !!props.write,
+                    writeWithoutResponse: !!props.writeWithoutResponse,
+                    notify: !!props.notify,
+                    indicate: !!props.indicate
+                };
+
+                console.log(`[Ring]   CHARACTERISTIC: ${uuid}`, propertySummary);
+                window.dispatchEvent(new CustomEvent("ring-ble-discovery", {
+                    detail: {
+                        stage: 'characteristic',
+                        serviceUuid,
+                        characteristicUuid: uuid,
+                        properties: propertySummary
+                    }
+                }));
+
+                if (props.write || props.writeWithoutResponse) {
+                    console.log('[WRITE CHAR FOUND]', uuid);
+                    writableCharacteristics.push(uuid);
+                    window.dispatchEvent(new CustomEvent("ring-ble-discovery", {
+                        detail: {
+                            stage: 'write-characteristic',
+                            serviceUuid,
+                            characteristicUuid: uuid,
+                            properties: propertySummary
+                        }
+                    }));
+                }
+
+                // Snapshot de características legíveis para engenharia reversa
+                if (props.read) {
+                    try {
+                        const snapshot = await char.readValue();
+                        const snapshotHex = this.dataViewToHex(snapshot);
+                        window.dispatchEvent(new CustomEvent("ring-char-snapshot", {
+                            detail: {
+                                serviceUuid,
+                                characteristicUuid: uuid,
+                                hex: snapshotHex,
+                                byteLength: snapshot.byteLength
+                            }
+                        }));
+                    } catch (err) {
+                        console.warn(`[Ring]   Snapshot read falhou em ${uuid}:`, err);
+                    }
+                }
 
                 // 1. Identificar Canal de Escrita (RX)
                 if ((props.write || props.writeWithoutResponse) && !foundWrite) {
@@ -275,8 +359,18 @@ class RingController {
                         (serviceUuid.includes('fee7') && props.writeWithoutResponse)) {
 
                         this.writeChar = char;
+                        this.writeCharacteristic = char;
                         foundWrite = true;
                         console.log(`[Ring] Canal de Escrita Definido: ${uuid}`);
+                    }
+                }
+
+                // Preferência explícita: NUS RX (6e400002)
+                if (props.write || props.writeWithoutResponse) {
+                    if (uuid.includes(NUS_RX_UUID_PREFIX)) {
+                        this.writeCharacteristic = char;
+                        this.writeChar = char;
+                        console.log('[WRITE CHAR SELECTED]', uuid);
                     }
                 }
 
@@ -312,6 +406,48 @@ class RingController {
 
         if (!this.writeChar) {
             console.warn("[Ring] AVISO: Nenhum canal de escrita proprietário óbvio encontrado. O controle pode ser limitado.");
+        }
+        console.groupEnd();
+        window.dispatchEvent(new CustomEvent("ring-ble-discovery", {
+            detail: {
+                stage: 'end',
+                hasWriteChannel: !!(this.writeCharacteristic || this.writeChar),
+                batterySupported: !!this.batteryChar,
+                writableCharacteristics
+            }
+        }));
+    }
+
+    async sendCommand(command: string) {
+        const writeTarget = this.writeCharacteristic || this.writeChar;
+        if (!writeTarget) {
+            console.error('[CMD ERROR] No write characteristic');
+            return;
+        }
+
+        try {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(command);
+
+            if (writeTarget.properties.writeWithoutResponse) {
+                await writeTarget.writeValueWithoutResponse(data);
+            } else if (writeTarget.properties.write) {
+                await writeTarget.writeValueWithResponse(data);
+            } else {
+                await writeTarget.writeValue(data);
+            }
+
+            console.log('[CMD SENT]', {
+                command,
+                hex: Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ')
+            });
+
+            window.dispatchEvent(new CustomEvent('ring-command-sent', {
+                detail: { command }
+            }));
+
+        } catch (error) {
+            console.error('[CMD FAILED]', error);
         }
     }
 
@@ -413,7 +549,21 @@ class RingController {
     // ----------------------------------------------------------------
 
     private handleIncomingData(dataView: DataView, uuid: string) {
-        const buffer = new Uint8Array(dataView.buffer);
+        const buffer = new Uint8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+        const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
+        const signature = this.buildPacketSignature(buffer, uuid);
+        this.packetStats[signature] = (this.packetStats[signature] || 0) + 1;
+
+        window.dispatchEvent(new CustomEvent("ring-raw-packet", {
+            detail: {
+                uuid,
+                hex,
+                byteLength: buffer.length,
+                signature,
+                count: this.packetStats[signature],
+                timestamp: new Date().toISOString()
+            }
+        }));
 
         const textDecoder = new TextDecoder('utf-8');
         let text = "";
@@ -428,27 +578,46 @@ class RingController {
         if (isAscii && buffer.length > 2) {
             text = textDecoder.decode(dataView).replace(/\0/g, '').trim();
             if (text.length > 0) {
-                this.parseAsciiProtocol(text);
+                const parsedAscii = this.parseAsciiProtocol(text);
+                window.dispatchEvent(new CustomEvent("ring-packet-decoded", {
+                    detail: {
+                        uuid,
+                        protocol: 'ascii',
+                        rawText: text,
+                        parsed: parsedAscii
+                    }
+                }));
                 window.dispatchEvent(new CustomEvent("ring-debug", { detail: { text, hex: "", isAscii: true, uuid } }));
                 return;
             }
         }
 
         // Hex Debug - envia também o dump hex para inspeção no console
-        const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
         window.dispatchEvent(new CustomEvent("ring-debug", { detail: { text: "", hex, isAscii: false, uuid } }));
 
-        this.parseBinaryProtocol(dataView, uuid);
+        const parsedBinary = this.parseBinaryProtocol(dataView, uuid);
+        if (parsedBinary) {
+            window.dispatchEvent(new CustomEvent("ring-packet-decoded", {
+                detail: {
+                    uuid,
+                    protocol: 'binary',
+                    rawHex: hex,
+                    parsed: parsedBinary
+                }
+            }));
+        }
     }
 
     private parseAsciiProtocol(text: string) {
         let updated = false;
+        const decoded: Record<string, any> = {};
 
         if (text.includes("MEAS_EVT_HR=")) {
             const val = parseInt(text.split('=')[1]);
             if (!isNaN(val) && val > 0) {
                 this.updateMetrics({ heartRate: val, source: 'proprietary' });
                 updated = true;
+                decoded.heartRate = val;
             }
         }
 
@@ -457,6 +626,7 @@ class RingController {
             if (!isNaN(val) && val > 0) {
                 this.updateMetrics({ spo2: val, source: 'proprietary' });
                 updated = true;
+                decoded.spo2 = val;
             }
         }
 
@@ -468,6 +638,7 @@ class RingController {
                 if (sys > 0 && dia > 0) {
                     this.updateMetrics({ bloodPressure: { sys, dia }, source: 'proprietary' });
                     updated = true;
+                    decoded.bloodPressure = { sys, dia };
                 }
             }
         }
@@ -479,6 +650,7 @@ class RingController {
                 if (!isNaN(steps)) {
                     this.updateMetrics({ steps, source: 'proprietary' });
                     updated = true;
+                    decoded.steps = steps;
                 }
             }
         }
@@ -489,35 +661,38 @@ class RingController {
             if (!isNaN(val) && val > 0) {
                 this.updateMetrics({ hrv: val, source: 'proprietary' });
                 updated = true;
+                decoded.hrv = val;
             }
         }
 
         if (updated) console.log(`[Ring] Dados Texto Atualizados: ${text}`);
+        return { updated, ...decoded };
     }
 
     private parseBinaryProtocol(data: DataView, uuid: string) {
-        const buffer = new Uint8Array(data.buffer);
+        const buffer = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 
         // Standard Heart Rate (0x2A37)
         if (uuid.includes("2a37")) {
-            const flags = buffer[0];
-            let hr = 0;
-            if ((flags & 0x01) === 0) {
-                hr = buffer[1];
-            } else {
-                hr = buffer[1] + (buffer[2] << 8);
+            const decoded = this.decodeHeartRateMeasurement(buffer);
+            if (!decoded) return null;
+
+            if (typeof decoded.heartRate === 'number' && decoded.heartRate > 0 && decoded.heartRate < 255) {
+                this.updateMetrics({ heartRate: decoded.heartRate, source: 'standard' });
             }
-            if (hr > 0) {
-                this.updateMetrics({ heartRate: hr, source: 'standard' });
-                return;
-            }
+
+            return {
+                type: 'standard-heart-rate',
+                ...decoded,
+                measurementActive: (decoded.heartRate ?? 0) > 0
+            };
         }
 
         // Standard Battery (0x2A19) - Caso notifique
         if (uuid.includes("2a19")) {
             const bat = buffer[0];
             this.updateMetrics({ batteryLevel: bat });
-            return;
+            return { type: 'standard-battery', batteryLevel: bat };
         }
 
         // Pacotes Proprietários Hex (JYOU)
@@ -526,30 +701,98 @@ class RingController {
             // Estrutura comum NYJ: [0x32, HR, SPO2, BP_H, BP_L, ...]
             const hr = buffer[1];
             const spo2 = buffer[2];
+            const sys = buffer.length >= 5 ? buffer[3] : undefined;
+            const dia = buffer.length >= 5 ? buffer[4] : undefined;
 
-            if (hr > 0) this.metrics.heartRate = hr;
-            if (spo2 > 0) this.metrics.spo2 = spo2;
+            const metricUpdate: Partial<RingRealtimeData> = { source: 'proprietary' };
+            if (hr > 30 && hr < 240) metricUpdate.heartRate = hr;
+            if (spo2 >= 70 && spo2 <= 100) metricUpdate.spo2 = spo2;
+            if (sys && dia && sys > 60 && sys < 260 && dia > 30 && dia < 180) {
+                metricUpdate.bloodPressure = { sys, dia };
+            }
 
-            this.updateMetrics({ heartRate: hr, spo2: spo2, source: 'proprietary' });
+            this.updateMetrics(metricUpdate);
+            return {
+                type: 'proprietary-0x32',
+                heartRate: metricUpdate.heartRate,
+                spo2: metricUpdate.spo2,
+                bloodPressure: metricUpdate.bloodPressure,
+                rawLen: buffer.length
+            };
         }
+
+        return null;
+    }
+
+    private decodeHeartRateMeasurement(buffer: Uint8Array): {
+        flags: number;
+        heartRateFormat: 'uint8' | 'uint16';
+        sensorContactSupported: boolean;
+        sensorContactDetected: boolean;
+        energyExpendedPresent: boolean;
+        rrIntervalPresent: boolean;
+        heartRate: number;
+        energyExpended?: number;
+        rrIntervalsMs?: number[];
+    } | null {
+        if (buffer.length < 2) return null;
+
+        const flags = buffer[0];
+        const hrIsUInt16 = (flags & 0x01) === 0x01;
+        const sensorContactSupported = (flags & 0x04) === 0x04;
+        const sensorContactDetected = sensorContactSupported && ((flags & 0x02) === 0x02);
+        const energyExpendedPresent = (flags & 0x08) === 0x08;
+        const rrIntervalPresent = (flags & 0x10) === 0x10;
+
+        let offset = 1;
+        let heartRate = 0;
+
+        if (hrIsUInt16) {
+            if (buffer.length < 3) return null;
+            heartRate = buffer[offset] + (buffer[offset + 1] << 8);
+            offset += 2;
+        } else {
+            heartRate = buffer[offset];
+            offset += 1;
+        }
+
+        let energyExpended: number | undefined;
+        if (energyExpendedPresent) {
+            if (buffer.length >= offset + 2) {
+                energyExpended = buffer[offset] + (buffer[offset + 1] << 8);
+                offset += 2;
+            }
+        }
+
+        let rrIntervalsMs: number[] | undefined;
+        if (rrIntervalPresent && buffer.length >= offset + 2) {
+            rrIntervalsMs = [];
+            while (buffer.length >= offset + 2) {
+                const rrRaw = buffer[offset] + (buffer[offset + 1] << 8);
+                // RR-Interval is in 1/1024 seconds
+                rrIntervalsMs.push(Math.round((rrRaw / 1024) * 1000));
+                offset += 2;
+            }
+        }
+
+        return {
+            flags,
+            heartRateFormat: hrIsUInt16 ? 'uint16' : 'uint8',
+            sensorContactSupported,
+            sensorContactDetected,
+            energyExpendedPresent,
+            rrIntervalPresent,
+            heartRate,
+            energyExpended,
+            rrIntervalsMs
+        };
     }
 
     private updateMetrics(data: Partial<RingRealtimeData>) {
         this.metrics = { ...this.metrics, ...data };
 
-        // --- FALLBACK HRV (SIMULAÇÃO) ---
-        // Se o hardware envia HR mas falha em enviar HRV (comum em NYJ01 com firmware antigo),
-        // calculamos uma "Pontuação de Estresse" estimada baseada no HR para a UI não ficar vazia.
-        if (this.metrics.heartRate && !this.metrics.hrv) {
-            // Em repouso, HR alto = Menor HRV (Mais estresse).
-            // HR baixo = Maior HRV (Menos estresse).
-            // Fórmula dummy para UX: 100 - (BPM - 40). Clamp entre 10 e 95.
-            const simulatedHRV = Math.max(10, Math.min(95, 120 - this.metrics.heartRate));
-            this.metrics.hrv = Math.floor(simulatedHRV);
-        }
-
-        if (data.hrv === undefined && this.metrics.hrv) {
-            this.metrics.source = 'standard';
+        if (typeof data.hrv === 'number') {
+            this.metrics.source = data.source || this.metrics.source;
         }
         
         // --- ENVIAR PARA BUFFER (Batch) ---
@@ -632,7 +875,8 @@ class RingController {
     }
 
     private async sendRaw(hexString: string) {
-        if (!this.writeChar) {
+        const writeTarget = this.writeCharacteristic || this.writeChar;
+        if (!writeTarget) {
             // console.warn("[Ring] Sem canal de escrita.");
             return;
         }
@@ -642,10 +886,10 @@ class RingController {
         const bytes = new Uint8Array(match.map(v => parseInt(v, 16)));
 
         try {
-            if (this.writeChar.properties.writeWithoutResponse) {
-                await this.writeChar.writeValueWithoutResponse(bytes);
+            if (writeTarget.properties.writeWithoutResponse) {
+                await writeTarget.writeValueWithoutResponse(bytes);
             } else {
-                await this.writeChar.writeValueWithResponse(bytes);
+                await writeTarget.writeValueWithResponse(bytes);
             }
         } catch (e) {
             console.error(`[Ring] Write Fail:`, e);
@@ -654,6 +898,16 @@ class RingController {
 
     private delay(ms: number) { return new Promise(res => setTimeout(res, ms)); }
 
+    private dataViewToHex(data: DataView): string {
+        const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    private buildPacketSignature(bytes: Uint8Array, uuid: string): string {
+        const header = bytes.length > 0 ? bytes[0].toString(16).padStart(2, '0') : 'na';
+        return `${uuid}|len:${bytes.length}|h:${header}`;
+    }
+
     private onDisconnect() {
         console.log("[Ring] Desconectado.");
         if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
@@ -661,6 +915,7 @@ class RingController {
         this.stopBufferFlush();
 
         this.writeChar = null;
+        this.writeCharacteristic = null;
         this.batteryChar = null;
         this.server = null;
 
@@ -669,6 +924,10 @@ class RingController {
     }
 
     public isConnected() { return this.server ? this.server.connected : false; }
+
+    public getLatestMetrics(): RingRealtimeData {
+        return { ...this.metrics };
+    }
 }
 
 export const ringService = new RingController();
