@@ -186,7 +186,7 @@ const App: React.FC = () => {
 
     // Patient Views
     switch (activeView) {
-      case 'firstMeasurement': return <FirstMeasurement user={user} onComplete={handleFirstMeasurementComplete} />;
+      case 'firstMeasurement': return <FirstMeasurement user={user} onComplete={handleFirstMeasurementComplete} onLogout={logout} />;
       case 'chooseDoctor': return <ChooseDoctor onComplete={handleDoctorChosen} />;
       case 'inicio': return <PatientHome onNavigateToChat={handleNavigateToChat} onHeartRateUpdate={handleHeartRateUpdate} onRegisterMeal={() => setActiveView('registerMeal')} onViewNutrition={() => setActiveView('registerMeal')} onViewPrescriptions={() => setActiveView('patientPrescriptions')} onCallDrX={() => setActiveView('aiVoiceCall')} onOpenDoctorPresentation={handleOpenDoctorPresentation} onViewAppointments={() => setActiveView('appointments')} onViewReminders={() => setActiveView('reminders')} onViewGeneralMeasures={handleViewGeneralMeasures} onViewMetricDetail={handleViewMetricDetail} onViewSleepDetail={handleViewSleepDetail} lastMealTime={lastMealTime} onMarkRemindersAsViewed={handleMarkRemindersAsViewed} onViewMedicalRecords={() => setActiveView('medicalRecords')} />;
       case 'conversa': return <Chat initialMessage={initialChatMessage} onClearInitialMessage={() => setInitialChatMessage('')} />;

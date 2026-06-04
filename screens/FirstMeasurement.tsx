@@ -7,13 +7,14 @@ import { PatientSummary, RingDeviceInfo, User } from '../types';
 
 interface FirstMeasurementProps {
     onComplete: (bpmValue: number) => void;
+    onLogout: () => void;
     user: User;
 }
 
 type Step = 'intro' | 'connecting' | 'connected' | 'instructions' | 'calibrating' | 'results';
 type SensorStatus = 'waiting' | 'reading' | 'ok';
 
-const FirstMeasurement: React.FC<FirstMeasurementProps> = ({ onComplete, user }) => {
+const FirstMeasurement: React.FC<FirstMeasurementProps> = ({ onComplete, onLogout, user }) => {
     const [step, setStep] = useState<Step>('intro');
     const [progress, setProgress] = useState(0);
     const [device, setDevice] = useState<RingDeviceInfo | null>(null);
@@ -197,9 +198,14 @@ const FirstMeasurement: React.FC<FirstMeasurementProps> = ({ onComplete, user })
                             <h1 className="text-3xl font-bold mb-4">Bem-vindo, {user.name.split(' ')[0]}!</h1>
                             <p className="text-slate-300 text-lg mb-8">Vamos conectar seu <strong>Smart Ring</strong>.</p>
                             {error && <div className="mb-6 p-3 bg-red-500/20 rounded-lg text-sm text-red-300">{error}</div>}
-                            <button onClick={handleConnect} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-3">
-                                <BluetoothIcon className="w-6 h-6" /> Conectar Anel
-                            </button>
+                            <div className="flex gap-3 w-full">
+                                <button onClick={handleConnect} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-3">
+                                    <BluetoothIcon className="w-6 h-6" /> Conectar Anel
+                                </button>
+                                <button onClick={onLogout} className="px-5 text-slate-400 font-bold bg-slate-800/50 hover:bg-slate-800 hover:text-white rounded-xl border border-slate-700 transition-colors">
+                                    Sair
+                                </button>
+                            </div>
                         </div>
                     )}
 
