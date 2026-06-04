@@ -394,7 +394,14 @@ const DoctorProfile: React.FC<DoctorProfileProps> = ({ onBack, onLogout }) => {
                 <button onClick={onBack} className="p-2 rounded-full hover:bg-slate-800 text-slate-400 transition-colors">
                     <ArrowPathIcon className="w-5 h-5 rotate-180" />
                 </button>
-                <h1 className="text-lg font-bold flex-1 text-center pr-9">Perfil do Especialista</h1>
+                <h1 className="text-lg font-bold flex-1 text-center">Perfil do Especialista</h1>
+                <button
+                    onClick={onLogout}
+                    className="px-3 py-2 rounded-xl text-sm font-bold text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-700 transition-colors flex items-center gap-1.5"
+                >
+                    <ArrowRightOnRectangleIcon className="w-4 h-4" />
+                    Sair
+                </button>
             </header>
 
             {/* Main Content */}
